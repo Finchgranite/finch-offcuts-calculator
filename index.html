@@ -184,6 +184,18 @@
     font-weight:600;
   }
   button.primary:hover{background:#4a3f28;}
+  button.confirm{
+    background:var(--green);
+    color:#fff;
+    border:none;
+    padding:10px 20px;
+    border-radius:4px;
+    cursor:pointer;
+    font-size:13.5px;
+    font-weight:600;
+  }
+  button.confirm:hover{background:#465a3e;}
+  button.confirm:disabled{background:#a9b3a3; cursor:wait;}
   button.ghost{
     background:none;
     border:1px solid #b8b0a0;
@@ -270,6 +282,7 @@
     footer.brand-footer{border-top:1px solid #999;}
   }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3/lib/msal-browser.min.js"></script>
 </head>
 <body>
 
@@ -348,12 +361,14 @@
       <button class="ghost" onclick="resetForm()">Reset</button>
       <button class="ghost" onclick="window.print()">Print / Save as PDF</button>
       <button class="primary" id="saveQuoteBtn" onclick="saveQuote()">Save Quote</button>
+      <button class="confirm" id="confirmOrderBtn" onclick="confirmOrder()">Confirm Order / Book In</button>
     </div>
     <p class="small-note" id="saveHint" style="text-align:right; margin-top:6px;">First time: click "Save Quote" and choose the shared "Small Jobs" folder when asked &mdash; it'll remember it after that. This only affects quote saves, not your normal downloads.</p>
     <p class="small-note" style="text-align:right; margin-top:2px;">
       <span id="saveFolderStatus"></span>
       <a href="#" onclick="chooseSaveFolder(); return false;" style="color:var(--accent-dark);">Change save folder</a>
     </p>
+    <p class="small-note" id="confirmHint" style="text-align:right; margin-top:2px;">"Confirm Order / Book In" saves this quote as confirmed and books it into today's Small Jobs diary &mdash; first click will ask you to sign in with your Finch's Microsoft account.</p>
 
   </div>
 
@@ -430,6 +445,19 @@ const DEFAULT_EXTRAS = [
 ];
 const DEFAULT_SETTINGS = {vatRate:20, minCharge:50, colours:DEFAULT_COLOURS, extras:DEFAULT_EXTRAS};
 const STORAGE_KEY = "finchOffcutsSettings_v2";
+
+/* ---- Confirm Order / Book In (Microsoft 365 sign-in + shared calendar) ---- */
+const MSAL_CONFIG = {
+  auth: {
+    clientId: "b95c759c-b1d6-4564-b3db-718528d22e79",
+    authority: "https://login.microsoftonline.com/af6c9a31-760b-4764-b85b-543e51f6ff74",
+    redirectUri: "https://finchgranite.github.io/finch-offcuts-calculator/",
+  },
+  cache: { cacheLocation: "localStorage" },
+};
+const BOOKING_CALENDAR = "smalljobsnew@finchgranite.co.uk";
+const GRAPH_SCOPES = ["Calendars.ReadWrite.Shared"];
+let msalInstance = (typeof msal !== 'undefined') ? new msal.PublicClientApplication(MSAL_CONFIG) : null;
 
 let settings = loadSettings();
 let pieces = [];
@@ -856,6 +884,114 @@ function showSaveConfirmation(filename){
     hint.style.color = "";
     hint.style.fontWeight = "";
   }, 5000);
+}
+
+function moneyPlain(n){
+  return "£" + (Math.round(n*100)/100).toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+function showConfirmStatus(message, isError){
+  const hint = document.getElementById('confirmHint');
+  const original = hint.dataset.original || (hint.dataset.original = hint.textContent);
+  hint.textContent = message;
+  hint.style.color = isError ? "var(--danger)" : "var(--green)";
+  hint.style.fontWeight = "600";
+  clearTimeout(showConfirmStatus._t);
+  showConfirmStatus._t = setTimeout(()=>{
+    hint.textContent = original;
+    hint.style.color = "";
+    hint.style.fontWeight = "";
+  }, 8000);
+}
+
+async function getGraphToken(){
+  if(!msalInstance) throw new Error("Sign-in isn't available (Microsoft sign-in library failed to load)");
+  const accounts = msalInstance.getAllAccounts();
+  if(accounts.length > 0){
+    try{
+      const result = await msalInstance.acquireTokenSilent({scopes: GRAPH_SCOPES, account: accounts[0]});
+      return result.accessToken;
+    }catch(e){ /* cached sign-in didn't work silently - fall through to a visible sign-in prompt */ }
+  }
+  const result = await msalInstance.loginPopup({scopes: GRAPH_SCOPES});
+  return result.accessToken;
+}
+
+function toLocalIso(d){
+  const p = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function buildBookingEvent(data){
+  const start = new Date(data.savedAt);
+  const end = new Date(start.getTime() + 30*60000);
+  const pieceLines = data.pieces.map(p=>`${p.colour} ${p.length}x${p.width}mm ${p.thickness}mm - ${moneyPlain(p.price)}`);
+  const extraLines = data.extras.map(e=>`${e.name}${e.qty>1?' x'+e.qty:''} - ${moneyPlain(e.total)}`);
+
+  const lines = [
+    `Confirmed offcuts order - ${data.customerType}`,
+    `Customer: ${data.customer.name}`,
+  ];
+  if(data.customer.phone) lines.push(`Phone: ${data.customer.phone}`);
+  if(data.customer.email) lines.push(`Email: ${data.customer.email}`);
+  lines.push(`Quoted by: ${data.quotedBy}`, '', 'Pieces:', ...pieceLines);
+  if(extraLines.length){ lines.push('', 'Extras:', ...extraLines); }
+  lines.push('', `Total: ${moneyPlain(data.total)} (inc VAT)`);
+
+  return {
+    subject: `Small Job - ${data.customer.name} - Confirmed (${moneyPlain(data.total)})`,
+    start: { dateTime: toLocalIso(start), timeZone: "GMT Standard Time" },
+    end: { dateTime: toLocalIso(end), timeZone: "GMT Standard Time" },
+    body: { contentType: "Text", content: lines.join('\n') },
+  };
+}
+
+async function confirmOrder(){
+  const data = collectQuoteData();
+  if(!data.customer.name.trim()){ alert("Please enter the customer's name before confirming the order."); return; }
+  if(!data.quotedBy){ alert("Please select who is quoting before confirming the order."); return; }
+  if(data.pieces.length === 0){ alert("Add at least one piece before confirming the order."); return; }
+
+  const btn = document.getElementById('confirmOrderBtn');
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = "Booking in…";
+
+  try{
+    const token = await getGraphToken();
+    const event = buildBookingEvent(data);
+    const resp = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(BOOKING_CALENDAR)}/events`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(event),
+    });
+    if(!resp.ok){
+      const errText = await resp.text();
+      throw new Error(`Calendar booking failed (${resp.status}): ${errText.slice(0,200)}`);
+    }
+
+    const filename = buildQuoteFilenameBase(data) + "_CONFIRMED.html";
+    const content = buildQuoteHtmlSnapshot(data);
+    const dirHandle = await getSaveDirectoryHandle(false);
+    if(dirHandle){
+      try{
+        const fileHandle = await dirHandle.getFileHandle(filename, {create:true});
+        const writable = await fileHandle.createWritable();
+        await writable.write(content);
+        await writable.close();
+      }catch(e){ console.error("Booked in, but couldn't save the confirmed quote record:", e); }
+    }else{
+      downloadBlob(filename, content, "text/html");
+    }
+
+    showConfirmStatus("Booked in to today's Small Jobs diary, and saved as confirmed.", false);
+  }catch(e){
+    console.error(e);
+    showConfirmStatus("Couldn't book this in — " + e.message + ". Ask Graham if this keeps happening.", true);
+  }finally{
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
 }
 
 function resetForm(){
