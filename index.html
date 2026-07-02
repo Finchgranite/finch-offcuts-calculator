@@ -196,6 +196,31 @@
   }
   button.confirm:hover{background:#465a3e;}
   button.confirm:disabled{background:#a9b3a3; cursor:wait;}
+  button.confirm-outline{
+    background:none;
+    border:1px solid var(--green);
+    color:var(--green);
+    padding:10px 20px;
+    border-radius:4px;
+    cursor:pointer;
+    font-size:13.5px;
+    font-weight:600;
+  }
+  button.confirm-outline:hover{background:#eef2ec;}
+  button.confirm-outline:disabled{border-color:#a9b3a3; color:#a9b3a3; cursor:wait;}
+  .loaded-quote-banner{
+    display:none;
+    background:#eef2ec;
+    border:1px solid var(--green);
+    border-radius:4px;
+    padding:10px 14px;
+    margin:0 0 18px;
+    font-size:13px;
+    line-height:1.5;
+  }
+  .loaded-quote-banner.show{display:block;}
+  .loaded-quote-banner.changed{background:#f7f0e4; border-color:#b8912f;}
+  .loaded-quote-banner a{color:var(--accent-dark);}
   button.ghost{
     background:none;
     border:1px solid #b8b0a0;
@@ -301,6 +326,8 @@
 
   <div class="body-pad">
 
+    <div id="loadedQuoteBanner" class="loaded-quote-banner"></div>
+
     <h2 class="section">Job Details</h2>
     <div class="job-grid">
       <div class="field"><label>Customer Name</label><input type="text" id="custName"></div>
@@ -361,6 +388,7 @@
       <button class="ghost" onclick="resetForm()">Reset</button>
       <button class="ghost" onclick="window.print()">Print / Save as PDF</button>
       <button class="primary" id="saveQuoteBtn" onclick="saveQuote()">Save Quote</button>
+      <button class="confirm-outline" id="loadSavedBtn" onclick="loadSavedQuote()">Load a Saved Quote&hellip;</button>
       <button class="confirm" id="confirmOrderBtn" onclick="confirmOrder()">Confirm Order / Book In</button>
     </div>
     <p class="small-note" id="saveHint" style="text-align:right; margin-top:6px;">First time: click "Save Quote" and choose the shared "Small Jobs" folder when asked &mdash; it'll remember it after that. This only affects quote saves, not your normal downloads.</p>
@@ -368,7 +396,7 @@
       <span id="saveFolderStatus"></span>
       <a href="#" onclick="chooseSaveFolder(); return false;" style="color:var(--accent-dark);">Change save folder</a>
     </p>
-    <p class="small-note" id="confirmHint" style="text-align:right; margin-top:2px;">"Confirm Order / Book In" saves this quote as confirmed and books it into today's Small Jobs diary &mdash; first click will ask you to sign in with your Finch's Microsoft account.</p>
+    <p class="small-note" id="confirmHint" style="text-align:right; margin-top:2px;">"Confirm Order / Book In" saves this quote as confirmed and books it into today's Small Jobs diary &mdash; first click will ask you to sign in with your Finch's Microsoft account. "Load a Saved Quote&hellip;" brings a quote back from the Small Jobs folder so you can check it over and book it in at its original prices.</p>
 
   </div>
 
@@ -414,6 +442,7 @@
     <button class="primary" onclick="saveSettings()">Save</button>
     <button class="ghost" onclick="resetSettingsToDefault()">Reset to Defaults</button>
   </div>
+  <p class="small-note" style="margin-top:10px;">Saving here updates prices for <b>every PC</b> — changes are shared through the Small Jobs folder and picked up automatically. Quotes already saved keep their original prices.</p>
 </div>
 
 <script>
@@ -464,6 +493,7 @@ let settings = loadSettings();
 let pieces = [];
 let customExtras = [];
 let pieceIdSeq = 1, customIdSeq = 1;
+let loadedSavedQuote = null;
 
 function loadSettings(){
   try{
@@ -502,6 +532,12 @@ function renderPieces(){
       if(c.name===p.colour) opt.selected = true;
       sel.appendChild(opt);
     });
+    if(p.colour && !settings.colours.some(c=>c.name===p.colour)){
+      const opt = document.createElement('option');
+      opt.value = p.colour; opt.textContent = p.colour + " (not in current price list)";
+      opt.selected = true;
+      sel.appendChild(opt);
+    }
     sel.onchange = ()=>{p.colour=sel.value; renderTotals();};
     colourTd.appendChild(sel);
 
@@ -651,6 +687,7 @@ function renderTotals(){
   document.getElementById('vatRateOut').textContent = settings.vatRate;
   document.getElementById('vatOut').innerHTML = money(vat);
   document.getElementById('totalOut').innerHTML = money(total);
+  if(loadedSavedQuote) updateLoadedQuoteBanner();
 }
 
 /* ---- save quote (JSON + standalone HTML snapshot) ---- */
@@ -747,6 +784,7 @@ function buildQuoteHtmlSnapshot(data){
     <div><b>Email:</b> ${data.customer.email||'-'}</div>
     <div><b>Quoted by:</b> ${data.quotedBy||'-'}</div>
     <div><b>Pricing:</b> ${data.customerType}</div>
+    ${data.originalSavedAt ? `<div><b>Originally quoted:</b> ${new Date(data.originalSavedAt).toLocaleDateString('en-GB')}</div>` : ''}
   </div>
 
   <h3>Pieces</h3>
@@ -871,6 +909,48 @@ async function chooseSaveFolder(){
   const handle = await getSaveDirectoryHandle(true);
   const el = document.getElementById('saveFolderStatus');
   if(handle && el) el.textContent = "Quotes will now save straight to “" + handle.name + "”.";
+  if(handle) syncSettingsFromShared();
+}
+
+/* ---- shared price settings (one file in the Small Jobs folder, synced by OneDrive) ---- */
+const SHARED_SETTINGS_FILE = 'finch-offcuts-settings.json';
+
+async function readSharedSettingsFile(){
+  try{
+    const dir = await idbGet(IDB_KEY);
+    if(!dir) return null;
+    if(await dir.queryPermission({mode:'read'}) !== 'granted') return null; // silent read only - never prompt without a click
+    const fh = await dir.getFileHandle(SHARED_SETTINGS_FILE);
+    const parsed = JSON.parse(await (await fh.getFile()).text());
+    if(!parsed || !Array.isArray(parsed.colours) || !Array.isArray(parsed.extras)) return null;
+    return parsed;
+  }catch(e){ return null; } // no folder chosen yet, no file yet, or no permission - carry on with local settings
+}
+
+async function writeSharedSettingsFile(){
+  try{
+    const dir = await getSaveDirectoryHandle(false); // may prompt, so only call from a real click
+    if(!dir) return false;
+    const fh = await dir.getFileHandle(SHARED_SETTINGS_FILE, {create:true});
+    const w = await fh.createWritable();
+    await w.write(JSON.stringify(settings, null, 2));
+    await w.close();
+    return true;
+  }catch(e){
+    console.error("Couldn't write the shared price file:", e);
+    return false;
+  }
+}
+
+async function syncSettingsFromShared(){
+  if(document.getElementById('settingsPanel').classList.contains('open')) return; // don't yank prices out from under an open editor
+  const shared = await readSharedSettingsFile();
+  if(!shared || !shared.updatedAt) return;
+  if(settings.updatedAt && shared.updatedAt <= settings.updatedAt) return;
+  settings = shared;
+  persistSettings();
+  renderExtrasList();
+  renderPieces();
 }
 
 function showSaveConfirmation(filename){
@@ -936,7 +1016,9 @@ function buildBookingEvent(data){
   ];
   if(data.customer.phone) lines.push(`Phone: ${data.customer.phone}`);
   if(data.customer.email) lines.push(`Email: ${data.customer.email}`);
-  lines.push(`Quoted by: ${data.quotedBy}`, '', 'Pieces:', ...pieceLines);
+  lines.push(`Quoted by: ${data.quotedBy}`);
+  if(data.originalSavedAt) lines.push(`Originally quoted: ${new Date(data.originalSavedAt).toLocaleDateString('en-GB')}`);
+  lines.push('', 'Pieces:', ...pieceLines);
   if(extraLines.length){ lines.push('', 'Extras:', ...extraLines); }
   lines.push('', `Total: ${moneyPlain(data.total)} (inc VAT)`);
 
@@ -948,13 +1030,16 @@ function buildBookingEvent(data){
   };
 }
 
-async function confirmOrder(){
-  const data = collectQuoteData();
-  if(!data.customer.name.trim()){ alert("Please enter the customer's name before confirming the order."); return; }
-  if(!data.quotedBy){ alert("Please select who is quoting before confirming the order."); return; }
-  if(data.pieces.length === 0){ alert("Add at least one piece before confirming the order."); return; }
+const HOSTED_URL = "https://finchgranite.github.io/finch-offcuts-calculator/";
+function isHostedOrigin(){ return location.origin === "https://finchgranite.github.io"; }
 
-  const btn = document.getElementById('confirmOrderBtn');
+async function bookQuoteToDiary(data, btn){
+  if(!isHostedOrigin()){
+    if(confirm("Booking into the diary only works from the online version of the calculator, not this local copy.\n\nOpen the online version now?")){
+      window.open(HOSTED_URL, '_blank');
+    }
+    return;
+  }
   btn.disabled = true;
   const originalLabel = btn.textContent;
   btn.textContent = "Booking in…";
@@ -996,8 +1081,136 @@ async function confirmOrder(){
   }
 }
 
+async function confirmOrder(){
+  const current = collectQuoteData();
+  if(!current.customer.name.trim()){ alert("Please enter the customer's name before confirming the order."); return; }
+  if(!current.quotedBy){ alert("Please select who is quoting before confirming the order."); return; }
+  if(current.pieces.length === 0){ alert("Add at least one piece before confirming the order."); return; }
+
+  let data = current;
+  if(loadedSavedQuote && pricingSignature(loadedSavedQuote) === pricingSignature(current)){
+    // the loaded quote's job is unchanged - honor the original quoted prices,
+    // but take customer contact details and quoted-by as currently shown
+    if(loadedSavedQuote.wasConfirmedFile && !confirm("⚠ This quote was already marked as CONFIRMED — booking it again will add a second diary entry.\n\nBook it in anyway?")) return;
+    data = Object.assign({}, loadedSavedQuote, {
+      customer: current.customer,
+      quotedBy: current.quotedBy || loadedSavedQuote.quotedBy,
+      savedAt: new Date().toISOString(),
+      originalSavedAt: loadedSavedQuote.originalSavedAt || loadedSavedQuote.savedAt,
+    });
+    delete data.wasConfirmedFile;
+  }
+  await bookQuoteToDiary(data, document.getElementById('confirmOrderBtn'));
+}
+
+/* ---- book in a previously saved quote, at its original quoted prices ---- */
+function pickQuoteFile(){
+  if('showOpenFilePicker' in window){
+    return window.showOpenFilePicker({
+      id:'finch-offcuts-savedir',
+      types:[{description:'Saved quotes', accept:{'text/html':['.html','.htm']}}],
+      multiple:false,
+    }).then(async ([fh])=>{
+      const f = await fh.getFile();
+      return {name:f.name, text:await f.text()};
+    });
+  }
+  return new Promise((resolve, reject)=>{
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.html,.htm';
+    inp.onchange = ()=>{
+      const f = inp.files[0];
+      if(!f){ reject(new Error('cancelled')); return; }
+      f.text().then(text=>resolve({name:f.name, text}), reject);
+    };
+    inp.click();
+  });
+}
+
+async function loadSavedQuote(){
+  let picked;
+  try{ picked = await pickQuoteFile(); }
+  catch(e){ return; } // user cancelled the picker
+  if(!picked) return;
+
+  let data;
+  try{
+    const doc = new DOMParser().parseFromString(picked.text, 'text/html');
+    const el = doc.getElementById('quote-data');
+    data = JSON.parse(el.textContent);
+    if(!data.customer || !Array.isArray(data.pieces) || typeof data.total !== 'number') throw new Error('bad data');
+  }catch(e){
+    showConfirmStatus("That file doesn't look like a quote saved by this calculator.", true);
+    return;
+  }
+
+  data.wasConfirmedFile = /_CONFIRMED/i.test(picked.name);
+  loadedSavedQuote = data;
+  populateFormFromQuote(data);
+  updateLoadedQuoteBanner();
+}
+
+/* only the things that determine price: pieces, extras and trade/private -
+   contact details and quoted-by can change without losing the original prices */
+function pricingSignature(data){
+  return JSON.stringify({
+    t: data.customerType,
+    p: data.pieces.map(p=>[String(p.colour), String(parseFloat(p.length)||0), String(parseFloat(p.width)||0), String(p.thickness)]),
+    e: data.extras.map(e=>[String(e.name), e.qty||1]).sort(),
+  });
+}
+
+function populateFormFromQuote(data){
+  document.getElementById('custName').value = data.customer.name || '';
+  document.getElementById('custPhone').value = data.customer.phone || '';
+  document.getElementById('custEmail').value = data.customer.email || '';
+  if(data.customer.date) document.getElementById('custDate').value = data.customer.date;
+  document.getElementById('quotedBy').value = data.quotedBy || '';
+  document.getElementById('custType').value = /trade/i.test(data.customerType) ? 'trade' : 'private';
+
+  pieces = data.pieces.map(p=>({id:pieceIdSeq++, colour:p.colour, length:String(p.length), width:String(p.width), thickness:String(p.thickness)}));
+
+  extraState = {};
+  customExtras = [];
+  const knownNames = new Set(settings.extras.map(ex=>ex.name));
+  data.extras.forEach(e=>{
+    if(knownNames.has(e.name)){
+      extraState[e.name] = {checked:true, qty:e.qty||1};
+    }else{
+      customExtras.push({id:customIdSeq++, desc:e.name + (e.qty>1?' x'+e.qty:''), price:String(e.total)});
+    }
+  });
+  renderExtrasList();
+  renderCustomExtras();
+  renderPieces();
+}
+
+function updateLoadedQuoteBanner(){
+  const el = document.getElementById('loadedQuoteBanner');
+  if(!loadedSavedQuote){
+    el.classList.remove('show', 'changed');
+    return;
+  }
+  const d = loadedSavedQuote;
+  const origDate = new Date(d.originalSavedAt || d.savedAt).toLocaleDateString('en-GB');
+  const unchanged = pricingSignature(d) === pricingSignature(collectQuoteData());
+  const confirmedNote = d.wasConfirmedFile ? " <b>This one was already booked in once.</b>" : "";
+  let msg;
+  if(unchanged){
+    msg = `Loaded saved quote for <b>${d.customer.name||'-'}</b>, quoted ${origDate}${d.quotedBy?' by '+d.quotedBy:''}. "Confirm Order / Book In" will book it at the <b>original quoted total ${money(d.total)}</b>.${confirmedNote}`;
+    el.classList.remove('changed');
+  }else{
+    msg = `Loaded saved quote for <b>${d.customer.name||'-'}</b>, quoted ${origDate} at ${money(d.total)}. <b>The job has been changed</b>, so it will book at today's prices shown below instead.${confirmedNote}`;
+    el.classList.add('changed');
+  }
+  el.innerHTML = msg + ' <a href="#" onclick="resetForm(); return false;">Start a fresh quote</a>';
+  el.classList.add('show');
+}
+
 function resetForm(){
   pieces = []; customExtras = []; extraState = {};
+  loadedSavedQuote = null;
+  updateLoadedQuoteBanner();
   document.getElementById('custName').value='';
   document.getElementById('custPhone').value='';
   document.getElementById('custEmail').value='';
@@ -1069,21 +1282,32 @@ function addExtraSetting(){
   settings.extras.push({name:"New Extra", private:0, trade:0});
   renderSettingsPanel();
 }
-function saveSettings(){
+async function saveSettings(){
   settings.vatRate = parseFloat(document.getElementById('vatRateInput').value)||0;
   settings.minCharge = parseFloat(document.getElementById('minChargeInput').value)||0;
+  settings.updatedAt = new Date().toISOString();
   persistSettings();
   renderExtrasList();
   renderPieces();
   toggleSettings(false);
+  if('showDirectoryPicker' in window){
+    const shared = await writeSharedSettingsFile();
+    if(shared){
+      showConfirmStatus("Prices saved — they'll reach every PC through the Small Jobs folder.", false);
+    }else{
+      showConfirmStatus("Prices saved on this PC only — couldn't reach the Small Jobs folder to share them.", true);
+    }
+  }
 }
-function resetSettingsToDefault(){
-  if(!confirm("Reset the price list, extras, VAT and minimum charge back to the original defaults?")) return;
+async function resetSettingsToDefault(){
+  if(!confirm("Reset the price list, extras, VAT and minimum charge back to the original defaults?\n\nThis will reset them on every PC, not just this one.")) return;
   settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+  settings.updatedAt = new Date().toISOString();
   persistSettings();
   renderSettingsPanel();
   renderExtrasList();
   renderPieces();
+  if('showDirectoryPicker' in window) await writeSharedSettingsFile();
 }
 
 /* ---- init ---- */
@@ -1100,6 +1324,9 @@ addPiece();
     }
   }catch(e){ /* no File System Access support, or nothing chosen yet - that's fine */ }
 })();
+
+syncSettingsFromShared();
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) syncSettingsFromShared(); });
 </script>
 
 </body>
