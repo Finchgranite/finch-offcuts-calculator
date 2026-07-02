@@ -458,6 +458,7 @@ const MSAL_CONFIG = {
 const BOOKING_CALENDAR = "smalljobsnew@finchgranite.co.uk";
 const GRAPH_SCOPES = ["Calendars.ReadWrite.Shared"];
 let msalInstance = (typeof msal !== 'undefined') ? new msal.PublicClientApplication(MSAL_CONFIG) : null;
+let msalReady = msalInstance ? msalInstance.initialize() : Promise.resolve();
 
 let settings = loadSettings();
 let pieces = [];
@@ -906,6 +907,7 @@ function showConfirmStatus(message, isError){
 
 async function getGraphToken(){
   if(!msalInstance) throw new Error("Sign-in isn't available (Microsoft sign-in library failed to load)");
+  await msalReady;
   const accounts = msalInstance.getAllAccounts();
   if(accounts.length > 0){
     try{
