@@ -85,7 +85,7 @@
     color:#8a8377;
     margin-bottom:3px;
   }
-  input[type=text], input[type=email], input[type=tel], input[type=number], select, input[type=date]{
+  input[type=text], input[type=email], input[type=tel], input[type=number], select, input[type=date], textarea{
     width:100%;
     padding:7px 8px;
     border:1px solid #c9c2b4;
@@ -95,6 +95,7 @@
     font-family:inherit;
     color:var(--ink);
   }
+  textarea{resize:vertical; line-height:1.4;}
   table.pieces{width:100%; border-collapse:collapse; margin-top:4px;}
   table.pieces th{
     text-align:left;
@@ -170,9 +171,22 @@
   .actions{
     margin-top:28px;
     display:flex;
+    flex-wrap:wrap;
     gap:10px;
     justify-content:flex-end;
   }
+  button.email{
+    background:#3f6f8f;
+    color:#fff;
+    border:none;
+    padding:10px 20px;
+    border-radius:4px;
+    cursor:pointer;
+    font-size:13.5px;
+    font-weight:600;
+  }
+  button.email:hover{background:#345d78;}
+  button.email:disabled{background:#9db4c2; cursor:wait;}
   button.primary{
     background:var(--accent-dark);
     color:#fff;
@@ -300,10 +314,79 @@
   .overlay.open{display:block;}
   .small-note{font-size:11px; color:#8a8377; margin-top:2px;}
 
+  /* plan / drawing attachment */
+  .plan-dropzone{
+    border:2px dashed #c9c2b4;
+    border-radius:6px;
+    background:#fff;
+    padding:16px;
+    text-align:center;
+    transition:border-color .15s, background .15s;
+  }
+  .plan-dropzone.drag{border-color:var(--accent); background:#f1ede4;}
+  .plan-dropzone-inner{display:flex; flex-direction:column; align-items:center; gap:8px;}
+  .plan-dropzone .add-btn{margin-top:0;}
+  .plan-hint{margin:2px 0 0; font-size:12px; color:#8a8377;}
+  .plan-thumbs{display:flex; flex-wrap:wrap; gap:10px; margin-top:12px;}
+  .plan-thumb{
+    position:relative;
+    width:120px; height:120px;
+    border:1px solid var(--line);
+    border-radius:5px;
+    overflow:hidden;
+    background:#f1ede4;
+    cursor:pointer;
+  }
+  .plan-thumb img{width:100%; height:100%; object-fit:cover; display:block;}
+  .plan-thumb .thumb-rm{
+    position:absolute; top:3px; right:3px;
+    width:24px; height:24px;
+    border:none; border-radius:50%;
+    background:rgba(43,43,43,.75); color:#fff;
+    font-size:15px; line-height:1; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .plan-thumb .thumb-rm:hover{background:var(--danger);}
+
+  /* webcam capture modal */
+  .cam-modal{
+    position:fixed; inset:0; z-index:60;
+    background:rgba(0,0,0,.72);
+    display:none; align-items:center; justify-content:center;
+    padding:20px;
+  }
+  .cam-modal.open{display:flex;}
+  .cam-box{
+    background:#fff; border-radius:8px; padding:18px;
+    width:640px; max-width:96vw; max-height:94vh; overflow:auto;
+    text-align:center;
+  }
+  .cam-box h3{margin:0 0 10px; font-size:16px;}
+  .cam-box video{width:100%; border-radius:6px; background:#000; max-height:60vh;}
+  .cam-controls{display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap; margin-top:12px;}
+  .cam-controls select{max-width:260px; padding:7px 8px; border:1px solid #c9c2b4; border-radius:4px;}
+  #camCapturedMsg{display:none; color:var(--green); font-weight:600; margin-top:8px; font-size:13px;}
+  #camError{display:none; color:var(--danger); margin-top:10px; font-size:13px;}
+
+  /* lightbox for enlarging a plan */
+  .lightbox{
+    position:fixed; inset:0; z-index:70;
+    background:rgba(0,0,0,.85);
+    display:none; align-items:center; justify-content:center;
+    padding:24px; cursor:zoom-out;
+  }
+  .lightbox.open{display:flex;}
+  .lightbox img{max-width:100%; max-height:100%; border-radius:4px; box-shadow:0 4px 30px rgba(0,0,0,.5);}
+
   @media print{
     body{background:#fff;}
     .sheet{box-shadow:none; margin:0; max-width:none; border-radius:0;}
-    .actions, #settingsToggle, #settingsPanel, .overlay, .rm-btn, .add-btn{display:none !important;}
+    .actions, #settingsToggle, #settingsPanel, .overlay, .rm-btn, .add-btn, .small-note{display:none !important;}
+    #planDropZone, .cam-modal, .lightbox, .thumb-rm{display:none !important;}
+    #planSection:not(.has-plans){display:none !important;} /* no orphan "Plan / Drawing" heading when there's no plan */
+    .plan-thumbs{gap:14px;}
+    .plan-thumb{width:auto; max-width:320px; height:auto; cursor:default; border-color:#999;} /* print plans full, not cropped */
+    .plan-thumb img{width:auto; max-width:320px; height:auto; object-fit:contain;}
     footer.brand-footer{border-top:1px solid #999;}
   }
 </style>
@@ -336,16 +419,7 @@
       <div class="field"><label>Date</label><input type="date" id="custDate"></div>
       <div class="field">
         <label>Quoted By</label>
-        <select id="quotedBy">
-          <option value="">Select&hellip;</option>
-          <option>Dave</option>
-          <option>Mick</option>
-          <option>Gerrard</option>
-          <option>Nathan</option>
-          <option>Joe</option>
-          <option>Graham</option>
-          <option>Ben</option>
-        </select>
+        <select id="quotedBy"><option value="">Select&hellip;</option></select>
       </div>
       <div class="field">
         <label>Customer Type</label>
@@ -377,6 +451,25 @@
     <div id="customExtras" style="margin-top:10px;"></div>
     <button class="add-btn" onclick="addCustomExtra()">+ Add Other Item</button>
 
+    <h2 class="section">Notes</h2>
+    <textarea id="jobNotes" rows="3" placeholder="Any extra job details — e.g. for an ex-yard / ex-stock piece: what it is, its colour, the thickness, and whereabouts it is in the yard. Also access notes, special requests, etc. (Internal — this is not shown to the customer.)"></textarea>
+
+    <div id="planSection">
+      <h2 class="section">Plan / Drawing</h2>
+      <p class="small-note" style="margin:-4px 0 8px;">Attach the customer's plan or drawing &mdash; take a photo with the office camera, drag an image straight off an email, or paste one with Ctrl+V. It saves with the quote and comes back whenever the quote is loaded.</p>
+      <div id="planDropZone" class="plan-dropzone">
+        <div class="plan-dropzone-inner">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center;">
+            <button type="button" class="add-btn" onclick="openWebcam()">&#128247; Take a photo</button>
+            <button type="button" class="add-btn" onclick="document.getElementById('planFileInput').click()">&#128193; Choose an image</button>
+          </div>
+          <p class="plan-hint">&hellip; or drag an image here, or paste with Ctrl+V</p>
+        </div>
+        <input type="file" id="planFileInput" accept="image/*" multiple style="display:none;">
+      </div>
+      <div id="planThumbs" class="plan-thumbs"></div>
+    </div>
+
     <div class="totals">
       <div class="row"><span>Pricing</span><span id="pricingTypeOut">Private (Retail)</span></div>
       <div class="row"><span>Subtotal</span><span id="subtotalOut">&pound;0.00</span></div>
@@ -388,6 +481,7 @@
       <button class="ghost" onclick="resetForm()">Reset</button>
       <button class="ghost" onclick="window.print()">Print / Save as PDF</button>
       <button class="primary" id="saveQuoteBtn" onclick="saveQuote()">Save Quote</button>
+      <button class="email" id="emailQuoteBtn" onclick="emailQuote()">Email Quote</button>
       <button class="confirm-outline" id="loadSavedBtn" onclick="loadSavedQuote()">Load a Saved Quote&hellip;</button>
       <button class="confirm" id="confirmOrderBtn" onclick="confirmOrder()">Confirm Order / Book In</button>
     </div>
@@ -396,6 +490,7 @@
       <span id="saveFolderStatus"></span>
       <a href="#" onclick="chooseSaveFolder(); return false;" style="color:var(--accent-dark);">Change save folder</a>
     </p>
+    <p class="small-note" id="emailHint" style="text-align:right; margin-top:2px;">"Email Quote" saves the quote and emails it to the customer from factory@finchgranite.co.uk, copying whoever did the quote. No email address on the form? It'll say so &mdash; just use "Save Quote" instead.</p>
     <p class="small-note" id="confirmHint" style="text-align:right; margin-top:2px;">"Confirm Order / Book In" saves this quote as confirmed and books it into today's Small Jobs diary &mdash; first click will ask you to sign in with your Finch's Microsoft account. "Load a Saved Quote&hellip;" brings a quote back from the Small Jobs folder so you can check it over and book it in at its original prices.</p>
 
   </div>
@@ -427,6 +522,12 @@
   <div id="extraSettings"></div>
   <button class="add-btn" onclick="addExtraSetting()">+ Add Extra</button>
 
+  <h4>Staff who send quotes</h4>
+  <p class="small-note">These names fill the "Quoted By" list. Quotes always send from <b>factory@finchgranite.co.uk</b>, and a hidden copy (BCC) goes to whoever did the quote &mdash; give anyone with their own inbox their address, and leave the rest as <b>factory@finchgranite.co.uk</b> (they'll get it there, and won't be copied twice).<br><b>New starter?</b> Add them here so they show in the dropdown &mdash; but they'll only receive their copy once their email address exists and is set up in Microsoft 365.</p>
+  <div class="col-header-row" style="grid-template-columns:1fr 1fr 22px;"><span>Name</span><span>Email for their copy</span><span></span></div>
+  <div id="staffSettings"></div>
+  <button class="add-btn" onclick="addStaffSetting()">+ Add Staff</button>
+
   <h4>Other Settings</h4>
   <div class="field" style="margin-bottom:10px;">
     <label>VAT rate (%)</label>
@@ -444,6 +545,24 @@
   </div>
   <p class="small-note" style="margin-top:10px;">Saving here updates prices for <b>every PC</b> — changes are shared through the Small Jobs folder and picked up automatically. Quotes already saved keep their original prices.</p>
 </div>
+
+<!-- webcam capture modal -->
+<div class="cam-modal" id="camModal">
+  <div class="cam-box">
+    <h3>Take a photo of the plan</h3>
+    <video id="camVideo" autoplay playsinline muted></video>
+    <div id="camCapturedMsg">&#10003; Added. Take another page, or click Done.</div>
+    <div id="camError"></div>
+    <div class="cam-controls">
+      <select id="camDeviceSelect" onchange="switchCamDevice(this.value)" style="display:none;"></select>
+      <button type="button" class="primary" onclick="capturePhoto()">&#128247; Capture</button>
+      <button type="button" class="ghost" onclick="closeWebcam()">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- lightbox -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox()"><img id="lightboxImg" alt="Plan"></div>
 
 <script>
 const LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAVQAAACOCAYAAABuQPBIAAAACXBIWXMAAAsTAAALEwEAmpwYAAAJwGlUWHRYTUw6Y29tLmFkb2JlLnhtcAAAAAAAPD94cGFja2V0IGJlZ2luPSLvu78iIGlkPSJXNU0wTXBDZWhpSHpyZVN6TlRjemtjOWQiPz4gPHg6eG1wbWV0YSB4bWxuczp4PSJhZG9iZTpuczptZXRhLyIgeDp4bXB0az0iQWRvYmUgWE1QIENvcmUgMTAuMC1jMDAwIDI1LkcuZWY3MmU0ZSwgMjAyNS8wNi8yNy0xODo1NDowNSAgICAgICAgIj4gPHJkZjpSREYgeG1sbnM6cmRmPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5LzAyLzIyLXJkZi1zeW50YXgtbnMjIj4gPHJkZjpEZXNjcmlwdGlvbiByZGY6YWJvdXQ9IiIgeG1sbnM6eG1wPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvIiB4bWxuczpkYz0iaHR0cDovL3B1cmwub3JnL2RjL2VsZW1lbnRzLzEuMS8iIHhtbG5zOnBob3Rvc2hvcD0iaHR0cDovL25zLmFkb2JlLmNvbS9waG90b3Nob3AvMS4wLyIgeG1sbnM6eG1wTU09Imh0dHA6Ly9ucy5hZG9iZS5jb20veGFwLzEuMC9tbS8iIHhtbG5zOnN0RXZ0PSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvc1R5cGUvUmVzb3VyY2VFdmVudCMiIHhtbG5zOnN0UmVmPSJodHRwOi8vbnMuYWRvYmUuY29tL3hhcC8xLjAvc1R5cGUvUmVzb3VyY2VSZWYjIiB4bXA6Q3JlYXRvclRvb2w9IkFkb2JlIFBob3Rvc2hvcCAyNy4yIChXaW5kb3dzKSIgeG1wOkNyZWF0ZURhdGU9IjIwMjYtMDUtMjRUMTA6MDQ6MDQrMDE6MDAiIHhtcDpNb2RpZnlEYXRlPSIyMDI2LTA1LTI0VDEwOjA5OjIxKzAxOjAwIiB4bXA6TWV0YWRhdGFEYXRlPSIyMDI2LTA1LTI0VDEwOjA5OjIxKzAxOjAwIiBkYzpmb3JtYXQ9ImltYWdlL3BuZyIgcGhvdG9zaG9wOkNvbG9yTW9kZT0iMyIgeG1wTU06SW5zdGFuY2VJRD0ieG1wLmlpZDo4NTQyNWE0OS0zODcyLWU2NGUtYTU0Mi05NTA0ODFjNjIzYzIiIHhtcE1NOkRvY3VtZW50SUQ9ImFkb2JlOmRvY2lkOnBob3Rvc2hvcDpkYTg4OGI4MC1lOGYwLTcxNDAtYTdhOC1hZGMxMTFlZmFlNDgiIHhtcE1NOk9yaWdpbmFsRG9jdW1lbnRJRD0ieG1wLmRpZDpkM2E1NjJlMi03ZTAzLTJjNGYtYmVhZi1kY2YwMzQzNTBhYWMiPiA8eG1wTU06SGlzdG9yeT4gPHJkZjpTZXE+IDxyZGY6bGkgc3RFdnQ6YWN0aW9uPSJjcmVhdGVkIiBzdEV2dDppbnN0YW5jZUlEPSJ4bXAuaWlkOmQzYTU2MmUyLTdlMDMtMmM0Zi1iZWFmLWRjZjAzNDM1MGFhYyIgc3RFdnQ6d2hlbj0iMjAyNi0wNS0yNFQxMDowNDowNCswMTowMCIgc3RFdnQ6c29mdHdhcmVBZ2VudD0iQWRvYmUgUGhvdG9zaG9wIDI3LjIgKFdpbmRvd3MpIi8+IDxyZGY6bGkgc3RFdnQ6YWN0aW9uPSJjb252ZXJ0ZWQiIHN0RXZ0OnBhcmFtZXRlcnM9ImZyb20gaW1hZ2UvcG5nIHRvIGFwcGxpY2F0aW9uL3ZuZC5hZG9iZS5waG90b3Nob3AiLz4gPHJkZjpsaSBzdEV2dDphY3Rpb249InNhdmVkIiBzdEV2dDppbnN0YW5jZUlEPSJ4bXAuaWlkOmExM2EwZmUzLWIyZDgtYTc0YS05ODQzLWM2ZDJkYjUzY2NjMyIgc3RFdnQ6d2hlbj0iMjAyNi0wNS0yNFQxMDowOTowMCswMTowMCIgc3RFdnQ6c29mdHdhcmVBZ2VudD0iQWRvYmUgUGhvdG9zaG9wIDI3LjIgKFdpbmRvd3MpIiBzdEV2dDpjaGFuZ2VkPSIvIi8+IDxyZGY6bGkgc3RFdnQ6YWN0aW9uPSJzYXZlZCIgc3RFdnQ6aW5zdGFuY2VJRD0ieG1wLmlpZDpmM2UwMzhhZi1kNzEwLWEwNDMtYTZlZi1kNTIxNDk4MGQwZmEiIHN0RXZ0OndoZW49IjIwMjYtMDUtMjRUMTA6MDk6MjErMDE6MDAiIHN0RXZ0OnNvZnR3YXJlQWdlbnQ9IkFkb2JlIFBob3Rvc2hvcCAyNy4yIChXaW5kb3dzKSIgc3RFdnQ6Y2hhbmdlZD0iLyIvPiA8cmRmOmxpIHN0RXZ0OmFjdGlvbj0iY29udmVydGVkIiBzdEV2dDpwYXJhbWV0ZXJzPSJmcm9tIGFwcGxpY2F0aW9uL3ZuZC5hZG9iZS5waG90b3Nob3AgdG8gaW1hZ2UvcG5nIi8+IDxyZGY6bGkgc3RFdnQ6YWN0aW9uPSJkZXJpdmVkIiBzdEV2dDpwYXJhbWV0ZXJzPSJjb252ZXJ0ZWQgZnJvbSBhcHBsaWNhdGlvbi92bmQuYWRvYmUucGhvdG9zaG9wIHRvIGltYWdlL3BuZyIvPiA8cmRmOmxpIHN0RXZ0OmFjdGlvbj0ic2F2ZWQiIHN0RXZ0Omluc3RhbmNlSUQ9InhtcC5paWQ6ODU0MjVhNDktMzg3Mi1lNjRlLWE1NDItOTUwNDgxYzYyM2MyIiBzdEV2dDp3aGVuPSIyMDI2LTA1LTI0VDEwOjA5OjIxKzAxOjAwIiBzdEV2dDpzb2Z0d2FyZUFnZW50PSJBZG9iZSBQaG90b3Nob3AgMjcuMiAoV2luZG93cykiIHN0RXZ0OmNoYW5nZWQ9Ii8iLz4gPC9yZGY6U2VxPiA8L3htcE1NOkhpc3Rvcnk+IDx4bXBNTTpEZXJpdmVkRnJvbSBzdFJlZjppbnN0YW5jZUlEPSJ4bXAuaWlkOmYzZTAzOGFmLWQ3MTAtYTA0My1hNmVmLWQ1MjE0OTgwZDBmYSIgc3RSZWY6ZG9jdW1lbnRJRD0ieG1wLmRpZDpkM2E1NjJlMi03ZTAzLTJjNGYtYmVhZi1kY2YwMzQzNTBhYWMiIHN0UmVmOm9yaWdpbmFsRG9jdW1lbnRJRD0ieG1wLmRpZDpkM2E1NjJlMi03ZTAzLTJjNGYtYmVhZi1kY2YwMzQzNTBhYWMiLz4gPC9yZGY6RGVzY3JpcHRpb24+IDwvcmRmOlJERj4gPC94OnhtcG1ldGE+IDw/eHBhY2tldCBlbmQ9InIiPz7zes78AAAi8UlEQVR42u1dTYi02VXOLHvZaIE7FWpXikgTcd0mjplJmcyMbZyfzDCZSc2kFZyJBpQai6CgBBfiQoqKuHAhSEfJixuRJgvFcmNpNrqoRUXciEWgIqHQVWjrNOd+3O/97s8559771vtzAocvTHfXW++95z73/DznnI89PDx8TEVFRUUlXXQR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";
@@ -472,7 +591,12 @@ const DEFAULT_EXTRAS = [
   {name:"Drainer grooves (5)", private:40, trade:70},
   {name:"Breakfronted piece", private:60, trade:100},
 ];
-const DEFAULT_SETTINGS = {vatRate:20, minCharge:50, colours:DEFAULT_COLOURS, extras:DEFAULT_EXTRAS};
+const FROM_MAILBOX = "factory@finchgranite.co.uk"; // quotes are always sent from here so replies land in one place
+const DEFAULT_STAFF_NAMES = ["Dave","Mick","Gerrard","Nathan","Joe","Graham","Ben"];
+function defaultStaff(){
+  return DEFAULT_STAFF_NAMES.map(n=>({name:n, email:FROM_MAILBOX}));
+}
+const DEFAULT_SETTINGS = {vatRate:20, minCharge:50, colours:DEFAULT_COLOURS, extras:DEFAULT_EXTRAS, staff:defaultStaff()};
 const STORAGE_KEY = "finchOffcutsSettings_v2";
 
 /* ---- Confirm Order / Book In (Microsoft 365 sign-in + shared calendar) ---- */
@@ -486,6 +610,7 @@ const MSAL_CONFIG = {
 };
 const BOOKING_CALENDAR = "smalljobsnew@finchgranite.co.uk";
 const GRAPH_SCOPES = ["Calendars.ReadWrite.Shared"];
+const MAIL_SCOPES = ["Mail.Send.Shared"]; // needed to send as the shared factory@ mailbox
 let msalInstance = (typeof msal !== 'undefined') ? new msal.PublicClientApplication(MSAL_CONFIG) : null;
 let msalReady = msalInstance ? msalInstance.initialize() : Promise.resolve();
 
@@ -494,6 +619,7 @@ let pieces = [];
 let customExtras = [];
 let pieceIdSeq = 1, customIdSeq = 1;
 let loadedSavedQuote = null;
+let planImages = []; // base64 data-URLs of attached plans/drawings for the current quote
 
 /* colours used to have one flat "private" price; carry it into the split 20mm/30mm fields */
 function normalizeSettings(s){
@@ -505,6 +631,18 @@ function normalizeSettings(s){
       }
       delete c.private;
     });
+  }
+  if(s){
+    if(!Array.isArray(s.staff)){
+      // migrate the older name->email map, else fall back to defaults
+      if(s.staffEmails && typeof s.staffEmails === 'object'){
+        s.staff = Object.keys(s.staffEmails).map(n=>({name:n, email:s.staffEmails[n]}));
+      }
+      if(!Array.isArray(s.staff) || !s.staff.length) s.staff = defaultStaff();
+    }
+    s.staff = s.staff.filter(x=>x && x.name != null)
+                     .map(x=>({name:String(x.name).trim(), email:(x.email||FROM_MAILBOX).trim()}));
+    delete s.staffEmails;
   }
   return s;
 }
@@ -746,9 +884,11 @@ function collectQuoteData(){
       date: document.getElementById('custDate').value,
     },
     quotedBy: document.getElementById('quotedBy').value,
+    notes: document.getElementById('jobNotes').value,
     customerType: isTrade() ? 'Trade' : 'Private (Retail)',
     pieces: piecesOut,
     extras: extrasOut,
+    plans: planImages.slice(),
     vatRate: settings.vatRate,
     subtotal, vat, total,
   };
@@ -760,6 +900,10 @@ function buildQuoteFilenameBase(data){
   return `${stamp}_${sanitizeForFilename(data.customer.name)}_${sanitizeForFilename(data.quotedBy)}`;
 }
 
+function escapeHtml(s){
+  return String(s == null ? "" : s).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+}
+
 function buildQuoteHtmlSnapshot(data){
   const rowsPieces = data.pieces.map(p=>`
     <tr><td>${p.colour}</td><td>${p.length}mm</td><td>${p.width}mm</td><td>${p.thickness}mm</td><td style="text-align:right">${money(p.price)}</td></tr>
@@ -767,6 +911,19 @@ function buildQuoteHtmlSnapshot(data){
   const rowsExtras = data.extras.map(e=>`
     <tr><td>${e.name}${e.qty>1?` &times;${e.qty}`:''}</td><td style="text-align:right">${money(e.total)}</td></tr>
   `).join("") || `<tr><td colspan="2" style="color:#8a8377">None</td></tr>`;
+
+  const plansHtml = (data.plans && data.plans.length) ? `
+  <h3>Plan / Drawing</h3>
+  <div style="display:flex; flex-wrap:wrap; gap:10px; margin:8px 0 18px;">
+    ${data.plans.map(src=>`<a href="${src}" target="_blank" style="display:block;"><img data-plan-img src="${src}" alt="Customer plan" style="max-width:100%; width:320px; border:1px solid #dcd7cf; border-radius:4px;"></a>`).join("")}
+  </div>` : "";
+
+  const notesHtml = (data.notes && data.notes.trim()) ? `
+  <h3>Notes</h3>
+  <p style="white-space:pre-wrap; font-size:13.5px; background:#f1ede4; border-left:3px solid #7c6a46; padding:8px 12px; border-radius:0 4px 4px 0; margin:8px 0 18px;">${escapeHtml(data.notes.trim())}</p>` : "";
+
+  /* images live once in the visible markup above; strip them from the embedded JSON so the file isn't twice the size (they're read back from the <img> tags on load) */
+  const jsonData = Object.assign({}, data, {plans: undefined});
 
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
@@ -817,10 +974,11 @@ function buildQuoteHtmlSnapshot(data){
     <div class="row"><span>VAT (${data.vatRate}%)</span><span>${money(data.vat)}</span></div>
     <div class="row grand"><span>Total</span><span>${money(data.total)}</span></div>
   </div>
-
+${notesHtml}
+${plansHtml}
   <footer>Finchs Stone &amp; Marble Ltd &middot; Skull House Lane, Appley Bridge, Wigan, WN6 9DR &middot; Tel: 01257 253069</footer>
 </div>
-<script type="application/json" id="quote-data">${JSON.stringify(data)}<\/script>
+<script type="application/json" id="quote-data">${JSON.stringify(jsonData).replace(/</g, '\\u003c')}<\/script>
 </body></html>`;
 }
 
@@ -835,24 +993,8 @@ function downloadBlob(filename, content, mime){
   URL.revokeObjectURL(url);
 }
 
-async function saveQuote(){
-  const data = collectQuoteData();
-  if(!data.customer.name.trim()){
-    alert("Please enter the customer's name before saving the quote.");
-    return;
-  }
-  if(!data.quotedBy){
-    alert("Please select who is quoting before saving the quote.");
-    return;
-  }
-  if(data.pieces.length === 0){
-    alert("Add at least one piece before saving the quote.");
-    return;
-  }
-  const base = buildQuoteFilenameBase(data);
-  const filename = base + ".html";
-  const content = buildQuoteHtmlSnapshot(data);
-
+/* write a quote HTML file to the chosen folder, falling back to a normal download; returns where it went */
+async function writeQuoteFile(filename, content){
   const dirHandle = await getSaveDirectoryHandle(false);
   if(dirHandle){
     try{
@@ -860,14 +1002,34 @@ async function saveQuote(){
       const writable = await fileHandle.createWritable();
       await writable.write(content);
       await writable.close();
-      showSaveConfirmation(filename + " — saved to your chosen quotes folder.");
-      return;
+      return 'folder';
     }catch(e){
       console.error("Direct folder save failed, falling back to Downloads:", e);
     }
   }
   downloadBlob(filename, content, "text/html");
-  showSaveConfirmation(filename + " — saved to Downloads (click “Change save folder” below to save straight to Small Jobs instead).");
+  return 'download';
+}
+
+/* shared by Save Quote and Email Quote - the common name/quoted-by/pieces checks */
+function validateQuoteReady(data, action){
+  if(!data.customer.name.trim()){ alert("Please enter the customer's name before " + action + "."); return false; }
+  if(!data.quotedBy){ alert("Please select who is quoting before " + action + "."); return false; }
+  if(data.pieces.length === 0){ alert("Add at least one piece before " + action + "."); return false; }
+  return true;
+}
+
+async function saveQuote(){
+  const data = collectQuoteData();
+  if(!validateQuoteReady(data, "saving the quote")) return;
+  const filename = buildQuoteFilenameBase(data) + ".html";
+  const content = buildQuoteHtmlSnapshot(data);
+  const where = await writeQuoteFile(filename, content);
+  if(where === 'folder'){
+    showSaveConfirmation(filename + " — saved to your chosen quotes folder.");
+  }else{
+    showSaveConfirmation(filename + " — saved to Downloads (click “Change save folder” below to save straight to Small Jobs instead).");
+  }
 }
 
 /* ---- remembered save folder (File System Access API, Chrome/Edge only) ---- */
@@ -965,6 +1127,7 @@ async function syncSettingsFromShared(){
   persistSettings();
   renderExtrasList();
   renderPieces();
+  renderQuoterDropdown();
 }
 
 function showSaveConfirmation(filename){
@@ -985,6 +1148,15 @@ function moneyPlain(n){
   return "£" + (Math.round(n*100)/100).toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2});
 }
 
+/* split a data URL into the bits Graph needs for a file attachment */
+function parseDataUrl(dataUrl){
+  const m = /^data:([^;]+);base64,(.*)$/.exec(dataUrl || "");
+  if(!m) return null;
+  const mime = m[1];
+  const ext = mime === "image/png" ? "png" : (mime === "image/jpeg" ? "jpg" : (mime.split("/")[1] || "img"));
+  return {mime, ext, b64: m[2]};
+}
+
 function showConfirmStatus(message, isError){
   const hint = document.getElementById('confirmHint');
   const original = hint.dataset.original || (hint.dataset.original = hint.textContent);
@@ -999,17 +1171,18 @@ function showConfirmStatus(message, isError){
   }, 8000);
 }
 
-async function getGraphToken(){
+async function getGraphToken(scopes){
+  scopes = scopes || GRAPH_SCOPES;
   if(!msalInstance) throw new Error("Sign-in isn't available (Microsoft sign-in library failed to load)");
   await msalReady;
   const accounts = msalInstance.getAllAccounts();
   if(accounts.length > 0){
     try{
-      const result = await msalInstance.acquireTokenSilent({scopes: GRAPH_SCOPES, account: accounts[0]});
+      const result = await msalInstance.acquireTokenSilent({scopes, account: accounts[0]});
       return result.accessToken;
     }catch(e){ /* cached sign-in didn't work silently - fall through to a visible sign-in prompt */ }
   }
-  const result = await msalInstance.loginPopup({scopes: GRAPH_SCOPES});
+  const result = await msalInstance.loginPopup({scopes});
   return result.accessToken;
 }
 
@@ -1032,9 +1205,13 @@ function buildBookingEvent(data){
   if(data.customer.email) lines.push(`Email: ${data.customer.email}`);
   lines.push(`Quoted by: ${data.quotedBy}`);
   if(data.originalSavedAt) lines.push(`Originally quoted: ${new Date(data.originalSavedAt).toLocaleDateString('en-GB')}`);
+  if(data.notes && data.notes.trim()) lines.push('', 'Notes: ' + data.notes.trim());
   lines.push('', 'Pieces:', ...pieceLines);
   if(extraLines.length){ lines.push('', 'Extras:', ...extraLines); }
   lines.push('', `Total: ${moneyPlain(data.total)} (inc VAT)`);
+  if(data.plans && data.plans.length){
+    lines.push('', `Plan/drawing: ${data.plans.length} image${data.plans.length>1?'s':''} attached to this entry (also saved with the quote).`);
+  }
 
   return {
     subject: `Small Job - ${data.customer.name} - Confirmed (${moneyPlain(data.total)})`,
@@ -1071,21 +1248,39 @@ async function bookQuoteToDiary(data, btn){
       throw new Error(`Calendar booking failed (${resp.status}): ${errText.slice(0,200)}`);
     }
 
-    const filename = buildQuoteFilenameBase(data) + "_CONFIRMED.html";
-    const content = buildQuoteHtmlSnapshot(data);
-    const dirHandle = await getSaveDirectoryHandle(false);
-    if(dirHandle){
-      try{
-        const fileHandle = await dirHandle.getFileHandle(filename, {create:true});
-        const writable = await fileHandle.createWritable();
-        await writable.write(content);
-        await writable.close();
-      }catch(e){ console.error("Booked in, but couldn't save the confirmed quote record:", e); }
-    }else{
-      downloadBlob(filename, content, "text/html");
+    /* attach the plan/drawing images straight onto the diary entry so the factory sees them there */
+    const createdEvent = await resp.json().catch(()=>({}));
+    let attachNote = "";
+    if(data.plans && data.plans.length && createdEvent.id){
+      const base = buildQuoteFilenameBase(data);
+      let attached = 0;
+      for(let i=0; i<data.plans.length; i++){
+        const parsed = parseDataUrl(data.plans[i]);
+        if(!parsed) continue;
+        try{
+          const aResp = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(BOOKING_CALENDAR)}/events/${createdEvent.id}/attachments`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              "@odata.type": "#microsoft.graph.fileAttachment",
+              name: `${base}_plan${i+1}.${parsed.ext}`,
+              contentType: parsed.mime,
+              contentBytes: parsed.b64,
+            }),
+          });
+          if(aResp.ok) attached++;
+          else console.error("Plan attachment rejected:", aResp.status, (await aResp.text()).slice(0,200));
+        }catch(e){ console.error("Attaching a plan image failed:", e); }
+      }
+      if(attached === data.plans.length) attachNote = ` Plan attached to the diary entry (${attached} image${attached>1?'s':''}).`;
+      else if(attached > 0) attachNote = ` ${attached} of ${data.plans.length} plan images attached to the diary entry (the rest are still saved with the quote).`;
+      else attachNote = " (Couldn't attach the plan image to the diary entry, but it's still saved with the quote.)";
     }
 
-    showConfirmStatus("Booked in to today's Small Jobs diary, and saved as confirmed.", false);
+    const filename = buildQuoteFilenameBase(data) + "_CONFIRMED.html";
+    await writeQuoteFile(filename, buildQuoteHtmlSnapshot(data));
+
+    showConfirmStatus("Booked in to today's Small Jobs diary, and saved as confirmed." + attachNote, false);
   }catch(e){
     console.error(e);
     showConfirmStatus("Couldn't book this in — " + e.message + ". Ask Graham if this keeps happening.", true);
@@ -1097,9 +1292,7 @@ async function bookQuoteToDiary(data, btn){
 
 async function confirmOrder(){
   const current = collectQuoteData();
-  if(!current.customer.name.trim()){ alert("Please enter the customer's name before confirming the order."); return; }
-  if(!current.quotedBy){ alert("Please select who is quoting before confirming the order."); return; }
-  if(current.pieces.length === 0){ alert("Add at least one piece before confirming the order."); return; }
+  if(!validateQuoteReady(current, "confirming the order")) return;
 
   let data = current;
   if(loadedSavedQuote && pricingSignature(loadedSavedQuote) === pricingSignature(current)){
@@ -1109,12 +1302,129 @@ async function confirmOrder(){
     data = Object.assign({}, loadedSavedQuote, {
       customer: current.customer,
       quotedBy: current.quotedBy || loadedSavedQuote.quotedBy,
+      plans: current.plans, // photos don't affect price - keep whatever's attached now
       savedAt: new Date().toISOString(),
       originalSavedAt: loadedSavedQuote.originalSavedAt || loadedSavedQuote.savedAt,
     });
     delete data.wasConfirmedFile;
   }
   await bookQuoteToDiary(data, document.getElementById('confirmOrderBtn'));
+}
+
+/* ---- email the quote to the customer (saves a record too) ---- */
+function isValidEmail(e){
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test((e || "").trim());
+}
+
+function showEmailStatus(message, isError){
+  const hint = document.getElementById('emailHint');
+  const original = hint.dataset.original || (hint.dataset.original = hint.textContent);
+  hint.textContent = message;
+  hint.style.color = isError ? "var(--danger)" : "var(--green)";
+  hint.style.fontWeight = "600";
+  clearTimeout(showEmailStatus._t);
+  showEmailStatus._t = setTimeout(()=>{
+    hint.textContent = original;
+    hint.style.color = "";
+    hint.style.fontWeight = "";
+  }, 8000);
+}
+
+function buildQuoteEmailHtml(data){
+  const cell = "padding:6px 8px;border-bottom:1px solid #eee;";
+  const head = "text-align:left;padding:6px 8px;border-bottom:1px solid #dcd7cf;font-size:11px;text-transform:uppercase;color:#8a8377;";
+  const rowsPieces = data.pieces.map(p=>
+    `<tr><td style="${cell}">${p.colour}</td><td style="${cell}">${p.length} &times; ${p.width} mm</td><td style="${cell}">${p.thickness} mm</td><td style="${cell}text-align:right;white-space:nowrap;">${moneyPlain(p.price)}</td></tr>`
+  ).join("");
+  const rowsExtras = data.extras.map(e=>
+    `<tr><td colspan="3" style="${cell}">${e.name}${e.qty>1?' &times; '+e.qty:''}</td><td style="${cell}text-align:right;white-space:nowrap;">${moneyPlain(e.total)}</td></tr>`
+  ).join("");
+  const extrasBlock = rowsExtras ? `<h3 style="font-size:14px;color:#5b4d33;margin:18px 0 6px;">Extras</h3><table style="width:100%;border-collapse:collapse;font-size:14px;">${rowsExtras}</table>` : "";
+
+  return `<div style="font-family:'Segoe UI',Arial,Helvetica,sans-serif;color:#2b2b2b;max-width:640px;">
+    <div style="border-bottom:3px solid #7c6a46;padding-bottom:10px;margin-bottom:16px;">
+      <div style="font-size:20px;font-weight:700;">Finch's Stone &amp; Marble Ltd</div>
+      <div style="font-size:12.5px;color:#787167;">Bespoke Surfaces</div>
+    </div>
+    <p style="font-size:14px;">Dear ${data.customer.name || 'Customer'},</p>
+    <p style="font-size:14px;">Thank you for your enquiry. Please find your quote below.</p>
+    <table style="font-size:14px;margin:14px 0;">
+      <tr><td style="padding:2px 12px 2px 0;color:#5b4d33;"><b>Date:</b></td><td>${data.customer.date || new Date().toLocaleDateString('en-GB')}</td></tr>
+      <tr><td style="padding:2px 12px 2px 0;color:#5b4d33;"><b>Quoted by:</b></td><td>${data.quotedBy || '-'}</td></tr>
+    </table>
+    <h3 style="font-size:14px;color:#5b4d33;margin:18px 0 6px;">Pieces</h3>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      <thead><tr><th style="${head}">Colour</th><th style="${head}">Size</th><th style="${head}">Thickness</th><th style="${head}text-align:right;">Price</th></tr></thead>
+      <tbody>${rowsPieces}</tbody>
+    </table>
+    ${extrasBlock}
+    <table style="margin-top:16px;margin-left:auto;font-size:14px;">
+      <tr><td style="padding:3px 0 3px 24px;">Subtotal</td><td style="padding:3px 0 3px 24px;text-align:right;">${moneyPlain(data.subtotal)}</td></tr>
+      <tr><td style="padding:3px 0 3px 24px;">VAT (${data.vatRate}%)</td><td style="padding:3px 0 3px 24px;text-align:right;">${moneyPlain(data.vat)}</td></tr>
+      <tr><td style="padding:8px 0 3px 24px;border-top:2px solid #2b2b2b;font-size:17px;font-weight:700;">Total</td><td style="padding:8px 0 3px 24px;border-top:2px solid #2b2b2b;font-size:17px;font-weight:700;text-align:right;">${moneyPlain(data.total)}</td></tr>
+    </table>
+    <p style="font-size:12.5px;color:#787167;margin-top:22px;">This quote is an estimate based on the details provided and is valid for 30 days. Please get in touch to go ahead, or if you have any questions.</p>
+    <div style="border-top:1px solid #dcd7cf;margin-top:18px;padding-top:12px;font-size:12px;color:#9b9486;">
+      Finch's Stone &amp; Marble Ltd &middot; Skull House Lane, Appley Bridge, Wigan, WN6 9DR<br>
+      Tel: 01257 253069 &middot; www.finchgranite.com
+    </div>
+  </div>`;
+}
+
+async function emailQuote(){
+  const data = collectQuoteData();
+  if(!validateQuoteReady(data, "emailing the quote")) return;
+
+  const email = (data.customer.email || "").trim();
+  if(!isValidEmail(email)){
+    alert("There's no valid customer email address on the form.\n\nAdd one to email the quote, or just use “Save Quote” instead.");
+    return;
+  }
+  if(!isHostedOrigin()){
+    if(confirm("Emailing a quote only works from the online version of the calculator, not this local copy.\n\nOpen the online version now?")){
+      window.open(HOSTED_URL, '_blank');
+    }
+    return;
+  }
+
+  const btn = document.getElementById('emailQuoteBtn');
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = "Emailing…";
+  try{
+    // keep a record of what we sent
+    const filename = buildQuoteFilenameBase(data) + ".html";
+    await writeQuoteFile(filename, buildQuoteHtmlSnapshot(data));
+
+    // BCC the person who quoted, unless they just use the factory inbox (which already gets a copy in Sent)
+    const quoterEmail = staffEmailFor(data.quotedBy).trim();
+    const bccList = (isValidEmail(quoterEmail) && quoterEmail.toLowerCase() !== FROM_MAILBOX.toLowerCase())
+      ? [{ emailAddress: { address: quoterEmail } }] : [];
+
+    const token = await getGraphToken(MAIL_SCOPES);
+    const message = {
+      subject: `Your quote from Finch's Stone & Marble — ${moneyPlain(data.total)}`,
+      body: { contentType: "HTML", content: buildQuoteEmailHtml(data) },
+      toRecipients: [{ emailAddress: { address: email } }],
+      bccRecipients: bccList,
+    };
+    const resp = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(FROM_MAILBOX)}/sendMail`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, saveToSentItems: true }),
+    });
+    if(!resp.ok){
+      const errText = await resp.text();
+      throw new Error(`Email failed (${resp.status}): ${errText.slice(0,200)}`);
+    }
+    showEmailStatus("Quote saved and emailed to " + email + " from " + FROM_MAILBOX + (bccList.length ? " (copy to " + quoterEmail + ")" : "") + ".", false);
+  }catch(e){
+    console.error(e);
+    showEmailStatus("Couldn't email the quote — " + e.message + ". It has still been saved. Ask Graham if this keeps happening.", true);
+  }finally{
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
 }
 
 /* ---- book in a previously saved quote, at its original quoted prices ---- */
@@ -1153,6 +1463,7 @@ async function loadSavedQuote(){
     const el = doc.getElementById('quote-data');
     data = JSON.parse(el.textContent);
     if(!data.customer || !Array.isArray(data.pieces) || typeof data.total !== 'number') throw new Error('bad data');
+    data.plans = [...doc.querySelectorAll('img[data-plan-img]')].map(i=>i.getAttribute('src')).filter(Boolean);
   }catch(e){
     showConfirmStatus("That file doesn't look like a quote saved by this calculator.", true);
     return;
@@ -1179,7 +1490,8 @@ function populateFormFromQuote(data){
   document.getElementById('custPhone').value = data.customer.phone || '';
   document.getElementById('custEmail').value = data.customer.email || '';
   if(data.customer.date) document.getElementById('custDate').value = data.customer.date;
-  document.getElementById('quotedBy').value = data.quotedBy || '';
+  renderQuoterDropdown(data.quotedBy || '');
+  document.getElementById('jobNotes').value = data.notes || '';
   document.getElementById('custType').value = /trade/i.test(data.customerType) ? 'trade' : 'private';
 
   pieces = data.pieces.map(p=>({id:pieceIdSeq++, colour:p.colour, length:String(p.length), width:String(p.width), thickness:String(p.thickness)}));
@@ -1197,6 +1509,8 @@ function populateFormFromQuote(data){
   renderExtrasList();
   renderCustomExtras();
   renderPieces();
+  planImages = (data.plans || []).slice();
+  renderPlanThumbs();
 }
 
 function updateLoadedQuoteBanner(){
@@ -1223,17 +1537,208 @@ function updateLoadedQuoteBanner(){
 
 function resetForm(){
   pieces = []; customExtras = []; extraState = {};
+  planImages = [];
   loadedSavedQuote = null;
   updateLoadedQuoteBanner();
   document.getElementById('custName').value='';
   document.getElementById('custPhone').value='';
   document.getElementById('custEmail').value='';
   document.getElementById('custDate').valueAsDate = new Date();
-  document.getElementById('quotedBy').value='';
+  renderQuoterDropdown('');
+  document.getElementById('jobNotes').value='';
   document.getElementById('custType').value='private';
   renderExtrasList();
   addPiece();
   renderCustomExtras();
+  renderPlanThumbs();
+}
+
+/* ---- plan / drawing attachment (photo, drag-drop, paste) ---- */
+const PLAN_MAX_DIM = 2400; // longest edge; enough to read handwritten dimensions on a plan without bloating the file
+const PLAN_JPEG_QUALITY = 0.82;
+const CAM_DEVICE_KEY = 'finchOffcutsCamDevice';
+let camStream = null;
+
+function scaledCanvasFromSource(src, natW, natH){
+  const scale = Math.min(1, PLAN_MAX_DIM / Math.max(natW, natH));
+  const w = Math.max(1, Math.round(natW*scale)), h = Math.max(1, Math.round(natH*scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  canvas.getContext('2d').drawImage(src, 0, 0, w, h);
+  return canvas;
+}
+
+function fileToPlanImage(file){
+  return new Promise((resolve, reject)=>{
+    if(!file || !file.type || !file.type.startsWith('image/')){ reject(new Error('not an image')); return; }
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=>{
+        try{ resolve(scaledCanvasFromSource(img, img.naturalWidth, img.naturalHeight).toDataURL('image/jpeg', PLAN_JPEG_QUALITY)); }
+        catch(err){ reject(err); }
+      };
+      img.onerror = ()=>reject(new Error('bad image'));
+      img.src = reader.result;
+    };
+    reader.onerror = ()=>reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function addPlanImage(dataUrl){
+  planImages.push(dataUrl);
+  renderPlanThumbs();
+}
+function removePlanImage(idx){
+  planImages.splice(idx, 1);
+  renderPlanThumbs();
+}
+function renderPlanThumbs(){
+  const wrap = document.getElementById('planThumbs');
+  if(!wrap) return;
+  wrap.innerHTML = "";
+  planImages.forEach((src, idx)=>{
+    const div = document.createElement('div');
+    div.className = 'plan-thumb';
+    div.title = 'Click to enlarge';
+    const img = document.createElement('img');
+    img.src = src;
+    img.onclick = ()=>openLightbox(src);
+    const rm = document.createElement('button');
+    rm.className = 'thumb-rm'; rm.innerHTML = '&times;'; rm.title = 'Remove this image';
+    rm.onclick = (e)=>{ e.stopPropagation(); removePlanImage(idx); };
+    div.appendChild(img); div.appendChild(rm);
+    wrap.appendChild(div);
+  });
+  const section = document.getElementById('planSection');
+  if(section) section.classList.toggle('has-plans', planImages.length > 0);
+}
+
+async function handlePlanFiles(fileList){
+  const files = [...fileList].filter(f=>f.type && f.type.startsWith('image/'));
+  for(const f of files){
+    try{ addPlanImage(await fileToPlanImage(f)); }
+    catch(err){ console.error('Skipped a file that was not a usable image:', err); }
+  }
+}
+
+function initPlanCapture(){
+  const dz = document.getElementById('planDropZone');
+  const fileInput = document.getElementById('planFileInput');
+  if(fileInput){
+    fileInput.addEventListener('change', ()=>{ handlePlanFiles(fileInput.files); fileInput.value = ''; });
+  }
+  if(dz){
+    ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev, e=>{ e.preventDefault(); dz.classList.add('drag'); }));
+    ['dragleave','dragend'].forEach(ev=>dz.addEventListener(ev, e=>{ e.preventDefault(); dz.classList.remove('drag'); }));
+    dz.addEventListener('drop', e=>{ e.preventDefault(); dz.classList.remove('drag'); if(e.dataTransfer) handlePlanFiles(e.dataTransfer.files); });
+  }
+  /* paste an image anywhere on the page - but never hijack a normal text paste into an input */
+  document.addEventListener('paste', e=>{
+    if(!e.clipboardData) return;
+    const imgs = [...e.clipboardData.items].filter(i=>i.type && i.type.startsWith('image/')).map(i=>i.getAsFile()).filter(Boolean);
+    if(imgs.length){ e.preventDefault(); handlePlanFiles(imgs); }
+  });
+  document.addEventListener('keydown', e=>{
+    if(e.key !== 'Escape') return;
+    if(document.getElementById('lightbox').classList.contains('open')) closeLightbox();
+    else if(document.getElementById('camModal').classList.contains('open')) closeWebcam();
+  });
+}
+
+/* lightbox */
+function openLightbox(src){
+  document.getElementById('lightboxImg').src = src;
+  document.getElementById('lightbox').classList.add('open');
+}
+function closeLightbox(){
+  document.getElementById('lightbox').classList.remove('open');
+}
+
+/* webcam capture */
+async function openWebcam(){
+  const modal = document.getElementById('camModal');
+  const err = document.getElementById('camError');
+  err.style.display = 'none'; err.textContent = '';
+  document.getElementById('camCapturedMsg').style.display = 'none';
+  modal.classList.add('open');
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    err.textContent = "This browser can't use the camera here. Drag an image in or use “Choose an image” instead.";
+    err.style.display = 'block';
+    return;
+  }
+  try{
+    await startCamStream(localStorage.getItem(CAM_DEVICE_KEY) || null);
+    await populateCamDevices();
+  }catch(e){
+    console.error(e);
+    err.textContent = "Couldn't open the camera (" + (e.message || e.name || 'error') + "). Check it's plugged in and that you allowed camera access, or drag/paste an image instead.";
+    err.style.display = 'block';
+  }
+}
+async function startCamStream(deviceId){
+  stopCamStream();
+  /* ask for full-resolution video - a document camera defaults to a useless 640x480 otherwise, so a plan would be unreadable */
+  const videoConstraint = { width:{ideal:3264}, height:{ideal:2448} };
+  if(deviceId) videoConstraint.deviceId = {exact:deviceId};
+  let stream;
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint, audio:false });
+  }catch(e){
+    stream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
+  }
+  camStream = stream;
+  const v = document.getElementById('camVideo');
+  v.srcObject = stream;
+  try{ await v.play(); }catch(e){}
+  const track = stream.getVideoTracks()[0];
+  const settingsId = track && track.getSettings ? track.getSettings().deviceId : null;
+  if(settingsId) localStorage.setItem(CAM_DEVICE_KEY, settingsId);
+}
+function stopCamStream(){
+  if(camStream){ camStream.getTracks().forEach(t=>t.stop()); camStream = null; }
+  const v = document.getElementById('camVideo');
+  if(v) v.srcObject = null;
+}
+async function populateCamDevices(){
+  const sel = document.getElementById('camDeviceSelect');
+  try{
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cams = devices.filter(d=>d.kind === 'videoinput');
+    if(cams.length <= 1){ sel.style.display = 'none'; return; }
+    sel.innerHTML = '';
+    const current = localStorage.getItem(CAM_DEVICE_KEY);
+    cams.forEach((c, i)=>{
+      const opt = document.createElement('option');
+      opt.value = c.deviceId;
+      opt.textContent = c.label || ('Camera ' + (i+1));
+      if(c.deviceId === current) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.style.display = '';
+  }catch(e){ sel.style.display = 'none'; }
+}
+async function switchCamDevice(deviceId){
+  if(!deviceId) return;
+  localStorage.setItem(CAM_DEVICE_KEY, deviceId);
+  try{ await startCamStream(deviceId); }catch(e){ console.error(e); }
+}
+function capturePhoto(){
+  const v = document.getElementById('camVideo');
+  if(!v || !v.videoWidth){ return; }
+  try{
+    const canvas = scaledCanvasFromSource(v, v.videoWidth, v.videoHeight);
+    addPlanImage(canvas.toDataURL('image/jpeg', PLAN_JPEG_QUALITY));
+    const msg = document.getElementById('camCapturedMsg');
+    msg.style.display = 'block';
+    clearTimeout(capturePhoto._t);
+    capturePhoto._t = setTimeout(()=>{ msg.style.display = 'none'; }, 3000);
+  }catch(e){ console.error('Capture failed:', e); }
+}
+function closeWebcam(){
+  stopCamStream();
+  document.getElementById('camModal').classList.remove('open');
 }
 
 /* ---- settings panel ---- */
@@ -1289,6 +1794,62 @@ function renderSettingsPanel(){
     };
     exWrap.appendChild(row);
   });
+
+  renderStaffSettings();
+}
+
+function renderStaffSettings(){
+  if(!Array.isArray(settings.staff)) settings.staff = defaultStaff();
+  const wrap = document.getElementById('staffSettings');
+  wrap.innerHTML = "";
+  settings.staff.forEach((st, idx)=>{
+    const row = document.createElement('div');
+    row.className = 'setting-extra-row';
+    row.style.gridTemplateColumns = '1fr 1fr 22px';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text'; nameInput.value = st.name; nameInput.placeholder = 'Name';
+    nameInput.oninput = e=>{ st.name = e.target.value; };
+    const emailInput = document.createElement('input');
+    emailInput.type = 'email'; emailInput.value = st.email; emailInput.placeholder = FROM_MAILBOX;
+    emailInput.oninput = e=>{ st.email = e.target.value.trim(); };
+    const rm = document.createElement('button');
+    rm.className = 'rm-btn'; rm.innerHTML = '&times;'; rm.title = 'Remove this person';
+    rm.onclick = ()=>{ settings.staff.splice(idx,1); renderStaffSettings(); };
+    row.appendChild(nameInput); row.appendChild(emailInput); row.appendChild(rm);
+    wrap.appendChild(row);
+  });
+}
+function addStaffSetting(){
+  if(!Array.isArray(settings.staff)) settings.staff = [];
+  settings.staff.push({name:"", email:FROM_MAILBOX});
+  renderStaffSettings();
+}
+
+/* build the "Quoted By" dropdown from the editable staff list; keeps a value even if that name has since been removed (e.g. loading an old quote) */
+function renderQuoterDropdown(selected){
+  const sel = document.getElementById('quotedBy');
+  const keep = selected !== undefined ? selected : sel.value;
+  sel.innerHTML = '';
+  const blank = document.createElement('option');
+  blank.value = ''; blank.textContent = 'Select…';
+  sel.appendChild(blank);
+  (settings.staff || []).forEach(st=>{
+    if(!st.name) return;
+    const opt = document.createElement('option');
+    opt.value = st.name; opt.textContent = st.name;
+    sel.appendChild(opt);
+  });
+  if(keep && !(settings.staff || []).some(st=>st.name === keep)){
+    const opt = document.createElement('option');
+    opt.value = keep; opt.textContent = keep + ' (not in current staff list)';
+    sel.appendChild(opt);
+  }
+  sel.value = keep || '';
+}
+
+function staffEmailFor(name){
+  const s = (settings.staff || []).find(x=>x.name === name);
+  return s && s.email ? s.email : "";
 }
 function addColourSetting(){
   settings.colours.push({name:"New Colour", private20:180, private30:180, trade20:300, trade30:350});
@@ -1301,10 +1862,13 @@ function addExtraSetting(){
 async function saveSettings(){
   settings.vatRate = parseFloat(document.getElementById('vatRateInput').value)||0;
   settings.minCharge = parseFloat(document.getElementById('minChargeInput').value)||0;
+  // drop blank staff rows and tidy the rest
+  settings.staff = (settings.staff||[]).filter(s=>s.name && s.name.trim()).map(s=>({name:s.name.trim(), email:(s.email||FROM_MAILBOX).trim()}));
   settings.updatedAt = new Date().toISOString();
   persistSettings();
   renderExtrasList();
   renderPieces();
+  renderQuoterDropdown();
   toggleSettings(false);
   if('showDirectoryPicker' in window){
     const shared = await writeSharedSettingsFile();
@@ -1323,14 +1887,17 @@ async function resetSettingsToDefault(){
   renderSettingsPanel();
   renderExtrasList();
   renderPieces();
+  renderQuoterDropdown();
   if('showDirectoryPicker' in window) await writeSharedSettingsFile();
 }
 
 /* ---- init ---- */
 document.getElementById('logoImg').src = "data:image/png;base64," + LOGO_B64;
 document.getElementById('custDate').valueAsDate = new Date();
+renderQuoterDropdown();
 renderExtrasList();
 addPiece();
+initPlanCapture();
 
 (async ()=>{
   try{
