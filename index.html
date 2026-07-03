@@ -347,6 +347,17 @@
     display:flex; align-items:center; justify-content:center;
   }
   .plan-thumb .thumb-rm:hover{background:var(--danger);}
+  .plan-file{
+    display:inline-flex; align-items:center; gap:4px;
+    border:1px solid var(--line); border-radius:6px;
+    background:#f1ede4; padding:6px 4px 6px 12px; max-width:230px;
+  }
+  .plan-file-link{
+    font-size:13px; color:var(--accent-dark); text-decoration:none;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px;
+  }
+  .plan-file-link::before{content:"\1F4C4"; margin-right:6px;}
+  .plan-file-link:hover{text-decoration:underline;}
 
   /* webcam capture modal */
   .cam-modal{
@@ -456,16 +467,16 @@
 
     <div id="planSection">
       <h2 class="section">Plan / Drawing</h2>
-      <p class="small-note" style="margin:-4px 0 8px;">Attach the customer's plan or drawing &mdash; take a photo with the office camera, drag an image straight off an email, or paste one with Ctrl+V. It saves with the quote and comes back whenever the quote is loaded.</p>
+      <p class="small-note" style="margin:-4px 0 8px;">Attach the customer's plan or drawing &mdash; a photo, PDF, or any file. Take a photo with the office camera, drag a file straight off an email, or paste one with Ctrl+V. It saves with the quote and comes back whenever the quote is loaded.</p>
       <div id="planDropZone" class="plan-dropzone">
         <div class="plan-dropzone-inner">
           <div style="display:flex; gap:10px; flex-wrap:wrap; justify-content:center;">
             <button type="button" class="add-btn" onclick="openWebcam()">&#128247; Take a photo</button>
-            <button type="button" class="add-btn" onclick="document.getElementById('planFileInput').click()">&#128193; Choose an image</button>
+            <button type="button" class="add-btn" onclick="document.getElementById('planFileInput').click()">&#128193; Choose a file (image / PDF)</button>
           </div>
-          <p class="plan-hint">&hellip; or drag an image here, or paste with Ctrl+V</p>
+          <p class="plan-hint">&hellip; or drag a file here, or paste with Ctrl+V</p>
         </div>
-        <input type="file" id="planFileInput" accept="image/*" multiple style="display:none;">
+        <input type="file" id="planFileInput" multiple style="display:none;">
       </div>
       <div id="planThumbs" class="plan-thumbs"></div>
     </div>
@@ -619,7 +630,7 @@ let pieces = [];
 let customExtras = [];
 let pieceIdSeq = 1, customIdSeq = 1;
 let loadedSavedQuote = null;
-let planImages = []; // base64 data-URLs of attached plans/drawings for the current quote
+let planFiles = []; // attached files: [{name, mime, src(dataURL)}] - images (downscaled) or any other file (e.g. PDF)
 
 /* colours used to have one flat "private" price; carry it into the split 20mm/30mm fields */
 function normalizeSettings(s){
@@ -888,7 +899,7 @@ function collectQuoteData(){
     customerType: isTrade() ? 'Trade' : 'Private (Retail)',
     pieces: piecesOut,
     extras: extrasOut,
-    plans: planImages.slice(),
+    plans: planFiles.slice(),
     vatRate: settings.vatRate,
     subtotal, vat, total,
   };
@@ -914,8 +925,14 @@ function buildQuoteHtmlSnapshot(data){
 
   const plansHtml = (data.plans && data.plans.length) ? `
   <h3>Plan / Drawing</h3>
-  <div style="display:flex; flex-wrap:wrap; gap:10px; margin:8px 0 18px;">
-    ${data.plans.map(src=>`<a href="${src}" target="_blank" style="display:block;"><img data-plan-img src="${src}" alt="Customer plan" style="max-width:100%; width:320px; border:1px solid #dcd7cf; border-radius:4px;"></a>`).join("")}
+  <div style="display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:8px 0 18px;">
+    ${data.plans.map(a=>{
+      const nm = escapeHtml(a.name || '');
+      if((a.mime || '').startsWith('image/')){
+        return `<a href="${a.src}" target="_blank" style="display:block;"><img data-plan-img data-plan-name="${nm}" src="${a.src}" alt="${nm || 'Customer plan'}" style="max-width:100%; width:320px; border:1px solid #dcd7cf; border-radius:4px;"></a>`;
+      }
+      return `<a data-plan-file data-plan-name="${nm}" data-plan-mime="${escapeHtml(a.mime || '')}" href="${a.src}" download="${nm}" target="_blank" style="display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border:1px solid #dcd7cf; border-radius:6px; background:#f1ede4; text-decoration:none; color:#2b2b2b; font-size:13.5px;">&#128196; ${nm || 'attachment'}</a>`;
+    }).join("")}
   </div>` : "";
 
   const notesHtml = (data.notes && data.notes.trim()) ? `
@@ -1210,7 +1227,7 @@ function buildBookingEvent(data){
   if(extraLines.length){ lines.push('', 'Extras:', ...extraLines); }
   lines.push('', `Total: ${moneyPlain(data.total)} (inc VAT)`);
   if(data.plans && data.plans.length){
-    lines.push('', `Plan/drawing: ${data.plans.length} image${data.plans.length>1?'s':''} attached to this entry (also saved with the quote).`);
+    lines.push('', `Plan/drawing: ${data.plans.length} file${data.plans.length>1?'s':''} attached to this entry (also saved with the quote).`);
   }
 
   return {
@@ -1248,33 +1265,35 @@ async function bookQuoteToDiary(data, btn){
       throw new Error(`Calendar booking failed (${resp.status}): ${errText.slice(0,200)}`);
     }
 
-    /* attach the plan/drawing images straight onto the diary entry so the factory sees them there */
+    /* attach the plan/drawing files straight onto the diary entry so the factory sees them there */
     const createdEvent = await resp.json().catch(()=>({}));
     let attachNote = "";
     if(data.plans && data.plans.length && createdEvent.id){
       const base = buildQuoteFilenameBase(data);
       let attached = 0;
       for(let i=0; i<data.plans.length; i++){
-        const parsed = parseDataUrl(data.plans[i]);
+        const a = data.plans[i];
+        const parsed = parseDataUrl(a.src);
         if(!parsed) continue;
+        const attName = (a.name && a.name.trim()) ? a.name.trim() : `${base}_plan${i+1}.${parsed.ext}`;
         try{
           const aResp = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(BOOKING_CALENDAR)}/events/${createdEvent.id}/attachments`, {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
             body: JSON.stringify({
               "@odata.type": "#microsoft.graph.fileAttachment",
-              name: `${base}_plan${i+1}.${parsed.ext}`,
+              name: attName,
               contentType: parsed.mime,
               contentBytes: parsed.b64,
             }),
           });
           if(aResp.ok) attached++;
-          else console.error("Plan attachment rejected:", aResp.status, (await aResp.text()).slice(0,200));
-        }catch(e){ console.error("Attaching a plan image failed:", e); }
+          else console.error("Attachment rejected:", aResp.status, (await aResp.text()).slice(0,200));
+        }catch(e){ console.error("Attaching a file failed:", e); }
       }
-      if(attached === data.plans.length) attachNote = ` Plan attached to the diary entry (${attached} image${attached>1?'s':''}).`;
-      else if(attached > 0) attachNote = ` ${attached} of ${data.plans.length} plan images attached to the diary entry (the rest are still saved with the quote).`;
-      else attachNote = " (Couldn't attach the plan image to the diary entry, but it's still saved with the quote.)";
+      if(attached === data.plans.length) attachNote = ` Plan attached to the diary entry (${attached} file${attached>1?'s':''}).`;
+      else if(attached > 0) attachNote = ` ${attached} of ${data.plans.length} files attached to the diary entry (the rest are still saved with the quote — a file may be too big for the diary).`;
+      else attachNote = " (Couldn't attach the file to the diary entry, but it's still saved with the quote.)";
     }
 
     const filename = buildQuoteFilenameBase(data) + "_CONFIRMED.html";
@@ -1463,7 +1482,15 @@ async function loadSavedQuote(){
     const el = doc.getElementById('quote-data');
     data = JSON.parse(el.textContent);
     if(!data.customer || !Array.isArray(data.pieces) || typeof data.total !== 'number') throw new Error('bad data');
-    data.plans = [...doc.querySelectorAll('img[data-plan-img]')].map(i=>i.getAttribute('src')).filter(Boolean);
+    const imgAtt = [...doc.querySelectorAll('img[data-plan-img]')].map(i=>({
+      name: i.getAttribute('data-plan-name') || '', mime: 'image/jpeg', src: i.getAttribute('src')
+    }));
+    const fileAtt = [...doc.querySelectorAll('[data-plan-file]')].map(el=>({
+      name: el.getAttribute('data-plan-name') || 'attachment',
+      mime: el.getAttribute('data-plan-mime') || 'application/octet-stream',
+      src: el.getAttribute('href')
+    }));
+    data.plans = [...imgAtt, ...fileAtt].filter(a=>a.src);
   }catch(e){
     showConfirmStatus("That file doesn't look like a quote saved by this calculator.", true);
     return;
@@ -1509,8 +1536,8 @@ function populateFormFromQuote(data){
   renderExtrasList();
   renderCustomExtras();
   renderPieces();
-  planImages = (data.plans || []).slice();
-  renderPlanThumbs();
+  planFiles = normalizePlanList(data.plans);
+  renderPlanFiles();
 }
 
 function updateLoadedQuoteBanner(){
@@ -1537,7 +1564,7 @@ function updateLoadedQuoteBanner(){
 
 function resetForm(){
   pieces = []; customExtras = []; extraState = {};
-  planImages = [];
+  planFiles = [];
   loadedSavedQuote = null;
   updateLoadedQuoteBanner();
   document.getElementById('custName').value='';
@@ -1550,7 +1577,7 @@ function resetForm(){
   renderExtrasList();
   addPiece();
   renderCustomExtras();
-  renderPlanThumbs();
+  renderPlanFiles();
 }
 
 /* ---- plan / drawing attachment (photo, drag-drop, paste) ---- */
@@ -1568,9 +1595,13 @@ function scaledCanvasFromSource(src, natW, natH){
   return canvas;
 }
 
-function fileToPlanImage(file){
+const MAX_ATTACH_BYTES = 15 * 1024 * 1024; // 15MB per file - keeps saved quotes a sane size
+
+function isImageMime(m){ return (m || '').startsWith('image/'); }
+
+/* downscale an image file to a JPEG data URL (keeps plans light + legible) */
+function imageFileToDataUrl(file){
   return new Promise((resolve, reject)=>{
-    if(!file || !file.type || !file.type.startsWith('image/')){ reject(new Error('not an image')); return; }
     const reader = new FileReader();
     reader.onload = ()=>{
       const img = new Image();
@@ -1586,40 +1617,82 @@ function fileToPlanImage(file){
   });
 }
 
-function addPlanImage(dataUrl){
-  planImages.push(dataUrl);
-  renderPlanThumbs();
+/* read any (non-image) file straight to a data URL, unchanged */
+function anyFileToDataUrl(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>resolve(reader.result);
+    reader.onerror = ()=>reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }
-function removePlanImage(idx){
-  planImages.splice(idx, 1);
-  renderPlanThumbs();
+
+/* attachments are {name, mime, src(dataURL)}; tolerate the old plain-dataURL-string format */
+function normalizePlanList(list){
+  return (list || []).map(a=> typeof a === 'string'
+    ? {name:'', mime:'image/jpeg', src:a}
+    : {name:a.name||'', mime:a.mime||'application/octet-stream', src:a.src}
+  ).filter(a=>a.src);
 }
-function renderPlanThumbs(){
+
+function addPlanFile(item){
+  planFiles.push(item);
+  renderPlanFiles();
+}
+function removePlanFile(idx){
+  planFiles.splice(idx, 1);
+  renderPlanFiles();
+}
+function renderPlanFiles(){
   const wrap = document.getElementById('planThumbs');
   if(!wrap) return;
   wrap.innerHTML = "";
-  planImages.forEach((src, idx)=>{
-    const div = document.createElement('div');
-    div.className = 'plan-thumb';
-    div.title = 'Click to enlarge';
-    const img = document.createElement('img');
-    img.src = src;
-    img.onclick = ()=>openLightbox(src);
-    const rm = document.createElement('button');
-    rm.className = 'thumb-rm'; rm.innerHTML = '&times;'; rm.title = 'Remove this image';
-    rm.onclick = (e)=>{ e.stopPropagation(); removePlanImage(idx); };
-    div.appendChild(img); div.appendChild(rm);
-    wrap.appendChild(div);
+  planFiles.forEach((a, idx)=>{
+    if(isImageMime(a.mime)){
+      const div = document.createElement('div');
+      div.className = 'plan-thumb';
+      div.title = a.name || 'Click to enlarge';
+      const img = document.createElement('img');
+      img.src = a.src;
+      img.onclick = ()=>openLightbox(a.src);
+      const rm = document.createElement('button');
+      rm.className = 'thumb-rm'; rm.innerHTML = '&times;'; rm.title = 'Remove';
+      rm.onclick = (e)=>{ e.stopPropagation(); removePlanFile(idx); };
+      div.appendChild(img); div.appendChild(rm);
+      wrap.appendChild(div);
+    }else{
+      const chip = document.createElement('div');
+      chip.className = 'plan-file';
+      chip.title = a.name || 'attachment';
+      const link = document.createElement('a');
+      link.className = 'plan-file-link';
+      link.href = a.src; link.target = '_blank'; link.download = a.name || 'attachment';
+      link.textContent = a.name || 'attachment';
+      const rm = document.createElement('button');
+      rm.className = 'rm-btn'; rm.innerHTML = '&times;'; rm.title = 'Remove';
+      rm.onclick = ()=>removePlanFile(idx);
+      chip.appendChild(link); chip.appendChild(rm);
+      wrap.appendChild(chip);
+    }
   });
   const section = document.getElementById('planSection');
-  if(section) section.classList.toggle('has-plans', planImages.length > 0);
+  if(section) section.classList.toggle('has-plans', planFiles.length > 0);
 }
 
 async function handlePlanFiles(fileList){
-  const files = [...fileList].filter(f=>f.type && f.type.startsWith('image/'));
-  for(const f of files){
-    try{ addPlanImage(await fileToPlanImage(f)); }
-    catch(err){ console.error('Skipped a file that was not a usable image:', err); }
+  for(const f of [...fileList]){
+    if(!f) continue;
+    if(f.size > MAX_ATTACH_BYTES){
+      alert(`"${f.name}" is too big to attach (${(f.size/1048576).toFixed(1)} MB). The limit is 15 MB — please use a smaller or compressed file.`);
+      continue;
+    }
+    try{
+      if(f.type && f.type.startsWith('image/')){
+        addPlanFile({name: f.name || 'photo.jpg', mime: 'image/jpeg', src: await imageFileToDataUrl(f)});
+      }else{
+        addPlanFile({name: f.name || 'attachment', mime: f.type || 'application/octet-stream', src: await anyFileToDataUrl(f)});
+      }
+    }catch(err){ console.error('Could not attach a file:', err); }
   }
 }
 
@@ -1634,11 +1707,11 @@ function initPlanCapture(){
     ['dragleave','dragend'].forEach(ev=>dz.addEventListener(ev, e=>{ e.preventDefault(); dz.classList.remove('drag'); }));
     dz.addEventListener('drop', e=>{ e.preventDefault(); dz.classList.remove('drag'); if(e.dataTransfer) handlePlanFiles(e.dataTransfer.files); });
   }
-  /* paste an image anywhere on the page - but never hijack a normal text paste into an input */
+  /* paste a file (screenshot or any file) anywhere on the page - but never hijack a normal text paste */
   document.addEventListener('paste', e=>{
     if(!e.clipboardData) return;
-    const imgs = [...e.clipboardData.items].filter(i=>i.type && i.type.startsWith('image/')).map(i=>i.getAsFile()).filter(Boolean);
-    if(imgs.length){ e.preventDefault(); handlePlanFiles(imgs); }
+    const files = [...e.clipboardData.items].filter(i=>i.kind === 'file').map(i=>i.getAsFile()).filter(Boolean);
+    if(files.length){ e.preventDefault(); handlePlanFiles(files); }
   });
   document.addEventListener('keydown', e=>{
     if(e.key !== 'Escape') return;
@@ -1729,7 +1802,8 @@ function capturePhoto(){
   if(!v || !v.videoWidth){ return; }
   try{
     const canvas = scaledCanvasFromSource(v, v.videoWidth, v.videoHeight);
-    addPlanImage(canvas.toDataURL('image/jpeg', PLAN_JPEG_QUALITY));
+    const stamp = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+    addPlanFile({name:`photo-${stamp}.jpg`, mime:'image/jpeg', src: canvas.toDataURL('image/jpeg', PLAN_JPEG_QUALITY)});
     const msg = document.getElementById('camCapturedMsg');
     msg.style.display = 'block';
     clearTimeout(capturePhoto._t);
